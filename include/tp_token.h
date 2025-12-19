@@ -15,6 +15,8 @@ typedef enum TP_TokType {
     TP_TOK_SLASH,
     TP_TOK_CARET,
 
+    TP_TOK_COMMA,   /* , */
+
     TP_TOK_LPAREN,
     TP_TOK_RPAREN,
     TP_TOK_LBRACE,

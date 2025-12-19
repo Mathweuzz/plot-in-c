@@ -51,6 +51,14 @@ TP_Node *tp_node_frac(TP_Node *num, TP_Node *den) {
     return n;
 }
 
+TP_Node *tp_node_tuple2(TP_Node *a, TP_Node *b) {
+    TP_Node *n = tp_new_node(TP_NODE_TUPLE2);
+    if (!n) return NULL;
+    n->as.tuple2.a = a;
+    n->as.tuple2.b = b;
+    return n;
+}
+
 void tp_ast_free(TP_Node *n) {
     if (!n) return;
 
@@ -75,6 +83,11 @@ void tp_ast_free(TP_Node *n) {
         case TP_NODE_FRAC:
             tp_ast_free(n->as.frac.num);
             tp_ast_free(n->as.frac.den);
+            break;
+
+        case TP_NODE_TUPLE2:
+            tp_ast_free(n->as.tuple2.a);
+            tp_ast_free(n->as.tuple2.b);
             break;
 
         default:
@@ -120,6 +133,10 @@ double tp_eval(const TP_Node *n, double x) {
 
         case TP_NODE_FRAC:
             return tp_eval(n->as.frac.num, x) / tp_eval(n->as.frac.den, x);
+
+        /* Tupla não é "avaliável" como escalar */
+        case TP_NODE_TUPLE2:
+            return NAN;
 
         default:
             return NAN;

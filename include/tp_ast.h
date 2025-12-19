@@ -14,7 +14,9 @@ typedef enum TP_NodeType {
     TP_NODE_POW,
 
     TP_NODE_FUNC1,
-    TP_NODE_FRAC
+    TP_NODE_FRAC,
+
+    TP_NODE_TUPLE2   /* (a,b) usado para curva paramétrica */
 } TP_NodeType;
 
 typedef enum TP_Func1 {
@@ -38,6 +40,8 @@ struct TP_Node {
 
         struct { TP_Func1 f; TP_Node *arg; } func1;
         struct { TP_Node *num; TP_Node *den; } frac;
+
+        struct { TP_Node *a; TP_Node *b; } tuple2;
     } as;
 };
 
@@ -47,6 +51,7 @@ TP_Node *tp_node_unary(TP_NodeType t, TP_Node *a);
 TP_Node *tp_node_bin(TP_NodeType t, TP_Node *a, TP_Node *b);
 TP_Node *tp_node_func1(TP_Func1 f, TP_Node *arg);
 TP_Node *tp_node_frac(TP_Node *num, TP_Node *den);
+TP_Node *tp_node_tuple2(TP_Node *a, TP_Node *b);
 
 void tp_ast_free(TP_Node *n);
 

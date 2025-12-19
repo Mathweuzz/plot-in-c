@@ -13,12 +13,24 @@ typedef struct TP_Args {
     unsigned char fg_r, fg_g, fg_b;
 
     TP_View view;
+
+    /* flags */
+    int has_xrange;
+    int has_yrange;
+    int has_t;
+
+    /* parametric range */
+    double tmin, tmax;
 } TP_Args;
 
+/* retorna:
+   0 OK
+   1 erro (errbuf)
+   2 help impresso
+*/
 int tp_args_parse(int argc, char **argv, TP_Args *out,
                   char *errbuf, int errbuf_sz);
 
-/* usado por main e também quando user pede --help */
 void tp_args_print_help(const char *prog);
 
 #endif

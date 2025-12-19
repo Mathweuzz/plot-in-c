@@ -37,12 +37,34 @@ static int is_command(TP_Token t, const char *name) {
     return t.type == TP_TOK_COMMAND && t.len == n && strncmp(t.lexeme, name, n) == 0;
 }
 
+static int is_cmd_1char(TP_Token t, char c) {
+    return t.type == TP_TOK_COMMAND && t.len == 1 && t.lexeme[0] == c;
+}
+
+/* comandos que ignoramos (layout TeX / wrappers) */
+static int is_noop_command(TP_Token t) {
+    if (t.type != TP_TOK_COMMAND) return 0;
+    if (is_command(t, "left") || is_command(t, "right")) return 1;
+    if (is_command(t, "quad") || is_command(t, "qquad")) return 1;
+    if (is_cmd_1char(t, ';') || is_cmd_1char(t, ',') || is_cmd_1char(t, ':') || is_cmd_1char(t, '!')) return 1;
+    return 0;
+}
+
+static void skip_noops(TP_Parser *p) {
+    while (!p->error && cur(p).type == TP_TOK_COMMAND && is_noop_command(cur(p))) {
+        next(p);
+    }
+}
+
 static Prec infix_prec(TP_Parser *p) {
     TP_TokType t = cur(p).type;
 
     if (t == TP_TOK_PLUS || t == TP_TOK_MINUS) return PREC_ADD;
     if (t == TP_TOK_STAR || t == TP_TOK_SLASH) return PREC_MUL;
     if (t == TP_TOK_CARET) return PREC_POW;
+
+    /* COMMA encerra expressão dentro de (a,b) */
+    if (t == TP_TOK_COMMA) return PREC_NONE;
 
     /* multiplicação implícita */
     if (tp_tok_is_primary_start(t)) return PREC_MUL;
@@ -58,7 +80,80 @@ static int consume(TP_Parser *p, TP_TokType t, const char *msg) {
     return 0;
 }
 
+/* Forward */
+static TP_Node *parse_primary(TP_Parser *p);
+
+static TP_Node *parse_prefix(TP_Parser *p) {
+    skip_noops(p);
+
+    if (tok_is(p, TP_TOK_MINUS)) {
+        next(p);
+        TP_Node *rhs = parse_prefix(p);
+        if (!rhs) return NULL;
+        return tp_node_unary(TP_NODE_UNARY_NEG, rhs);
+    }
+    return parse_primary(p);
+}
+
+/* Parse primary:
+   - number
+   - x | pi | e
+   - (expr) ou (a,b)
+   - {expr} ou {a,b}
+   - \frac{a}{b}
+   - \sin^{k}(x) (TeX) -> (sin(x))^k
+*/
+static TP_Node *parse_group_paren(TP_Parser *p) {
+    /* já consumiu '(' */
+    skip_noops(p);
+    TP_Node *first = parse_expr_prec(p, PREC_NONE);
+    if (!first) return NULL;
+
+    skip_noops(p);
+
+    if (tok_is(p, TP_TOK_COMMA)) {
+        /* tuple */
+        next(p);
+        skip_noops(p);
+        TP_Node *second = parse_expr_prec(p, PREC_NONE);
+        if (!second) { tp_ast_free(first); return NULL; }
+        skip_noops(p);
+        if (!consume(p, TP_TOK_RPAREN, "faltou ')' apos tupla (a,b)")) {
+            tp_ast_free(first); tp_ast_free(second); return NULL;
+        }
+        return tp_node_tuple2(first, second);
+    }
+
+    if (!consume(p, TP_TOK_RPAREN, "faltou ')'")) { tp_ast_free(first); return NULL; }
+    return first;
+}
+
+static TP_Node *parse_group_brace(TP_Parser *p) {
+    /* já consumiu '{' */
+    skip_noops(p);
+    TP_Node *first = parse_expr_prec(p, PREC_NONE);
+    if (!first) return NULL;
+
+    skip_noops(p);
+
+    if (tok_is(p, TP_TOK_COMMA)) {
+        next(p);
+        skip_noops(p);
+        TP_Node *second = parse_expr_prec(p, PREC_NONE);
+        if (!second) { tp_ast_free(first); return NULL; }
+        skip_noops(p);
+        if (!consume(p, TP_TOK_RBRACE, "faltou '}' apos tupla {a,b}")) {
+            tp_ast_free(first); tp_ast_free(second); return NULL;
+        }
+        return tp_node_tuple2(first, second);
+    }
+
+    if (!consume(p, TP_TOK_RBRACE, "faltou '}'")) { tp_ast_free(first); return NULL; }
+    return first;
+}
+
 static TP_Node *parse_primary(TP_Parser *p) {
+    skip_noops(p);
     TP_Token t = cur(p);
 
     if (t.type == TP_TOK_NUMBER) {
@@ -67,7 +162,6 @@ static TP_Node *parse_primary(TP_Parser *p) {
     }
 
     if (t.type == TP_TOK_IDENT) {
-        /* v1: x, pi, e */
         if (t.len == 1 && t.lexeme[0] == 'x') {
             next(p);
             return tp_node_var_x();
@@ -87,36 +181,35 @@ static TP_Node *parse_primary(TP_Parser *p) {
 
     if (t.type == TP_TOK_LPAREN) {
         next(p);
-        TP_Node *inside = parse_expr_prec(p, PREC_NONE);
-        if (!inside) return NULL;
-        if (!consume(p, TP_TOK_RPAREN, "faltou ')'")) { tp_ast_free(inside); return NULL; }
-        return inside;
+        return parse_group_paren(p);
     }
 
     if (t.type == TP_TOK_LBRACE) {
         next(p);
-        TP_Node *inside = parse_expr_prec(p, PREC_NONE);
-        if (!inside) return NULL;
-        if (!consume(p, TP_TOK_RBRACE, "faltou '}'")) { tp_ast_free(inside); return NULL; }
-        return inside;
+        return parse_group_brace(p);
     }
 
     if (t.type == TP_TOK_COMMAND) {
+        /* no-op commands já foram pulados, então aqui é comando real */
         if (is_command(t, "frac")) {
             next(p);
 
+            skip_noops(p);
             if (!consume(p, TP_TOK_LBRACE, "faltou '{' apos \\frac")) return NULL;
             TP_Node *num = parse_expr_prec(p, PREC_NONE);
             if (!num) return NULL;
+            skip_noops(p);
             if (!consume(p, TP_TOK_RBRACE, "faltou '}' no numerador de \\frac")) {
                 tp_ast_free(num); return NULL;
             }
 
+            skip_noops(p);
             if (!consume(p, TP_TOK_LBRACE, "faltou '{' no denominador de \\frac")) {
                 tp_ast_free(num); return NULL;
             }
             TP_Node *den = parse_expr_prec(p, PREC_NONE);
             if (!den) { tp_ast_free(num); return NULL; }
+            skip_noops(p);
             if (!consume(p, TP_TOK_RBRACE, "faltou '}' no denominador de \\frac")) {
                 tp_ast_free(num); tp_ast_free(den); return NULL;
             }
@@ -137,26 +230,37 @@ static TP_Node *parse_primary(TP_Parser *p) {
         }
 
         next(p);
+        skip_noops(p);
 
-        /* argumento pode ser (...) ou {...} ou um primary direto */
+        /* Suporte TeX: \sin^{3}(x) => (sin(x))^3 */
+        TP_Node *exponent = NULL;
+        if (tok_is(p, TP_TOK_CARET)) {
+            next(p);
+            skip_noops(p);
+            /* expoente pode ser {expr} ou primary simples */
+            exponent = parse_prefix(p);
+            if (!exponent) { set_err(p, "faltou expoente apos '^'"); return NULL; }
+            skip_noops(p);
+        }
+
+        /* argumento pode ser (...) ou {...} ou primary direto */
         TP_Node *arg = parse_primary(p);
-        if (!arg) { set_err(p, "faltou argumento para funcao"); return NULL; }
+        if (!arg) { set_err(p, "faltou argumento para funcao"); tp_ast_free(exponent); return NULL; }
 
-        return tp_node_func1(f, arg);
+        TP_Node *fn = tp_node_func1(f, arg);
+        if (!fn) { tp_ast_free(arg); tp_ast_free(exponent); return NULL; }
+
+        if (exponent) {
+            TP_Node *pow_node = tp_node_bin(TP_NODE_POW, fn, exponent);
+            if (!pow_node) { tp_ast_free(fn); tp_ast_free(exponent); return NULL; }
+            return pow_node;
+        }
+
+        return fn;
     }
 
     set_err(p, "token inesperado no inicio de termo");
     return NULL;
-}
-
-static TP_Node *parse_prefix(TP_Parser *p) {
-    if (tok_is(p, TP_TOK_MINUS)) {
-        next(p);
-        TP_Node *rhs = parse_prefix(p);
-        if (!rhs) return NULL;
-        return tp_node_unary(TP_NODE_UNARY_NEG, rhs);
-    }
-    return parse_primary(p);
 }
 
 static TP_Node *parse_expr_prec(TP_Parser *p, Prec prec) {
@@ -164,6 +268,8 @@ static TP_Node *parse_expr_prec(TP_Parser *p, Prec prec) {
     if (!left) return NULL;
 
     while (!p->error) {
+        skip_noops(p);
+
         Prec pcur = infix_prec(p);
         if (pcur == PREC_NONE || pcur <= prec) break;
 
@@ -223,6 +329,8 @@ void tp_parse_init(TP_Parser *p, const char *src) {
 TP_Node *tp_parse_expr(TP_Parser *p) {
     TP_Node *root = parse_expr_prec(p, PREC_NONE);
     if (!root) return NULL;
+
+    skip_noops(p);
 
     if (!p->error && cur(p).type != TP_TOK_EOF) {
         set_err(p, "sobrou texto apos o fim da expressao");

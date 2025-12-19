@@ -81,6 +81,9 @@ void tp_lex_next(TP_Lexer *lx) {
         case '*': advance(lx); lx->current = make_tok(TP_TOK_STAR,  start, 1, tok_pos, tok_col); return;
         case '/': advance(lx); lx->current = make_tok(TP_TOK_SLASH, start, 1, tok_pos, tok_col); return;
         case '^': advance(lx); lx->current = make_tok(TP_TOK_CARET, start, 1, tok_pos, tok_col); return;
+
+        case ',': advance(lx); lx->current = make_tok(TP_TOK_COMMA, start, 1, tok_pos, tok_col); return;
+
         case '(': advance(lx); lx->current = make_tok(TP_TOK_LPAREN,start, 1, tok_pos, tok_col); return;
         case ')': advance(lx); lx->current = make_tok(TP_TOK_RPAREN,start, 1, tok_pos, tok_col); return;
         case '{': advance(lx); lx->current = make_tok(TP_TOK_LBRACE,start, 1, tok_pos, tok_col); return;
@@ -88,8 +91,21 @@ void tp_lex_next(TP_Lexer *lx) {
         default: break;
     }
 
+    /* Commands: \sin, \left, \right, \frac ... ou comandos 1-char (\;, \, \:) */
     if (c == '\\') {
-        advance(lx);
+        advance(lx); /* consume '\' */
+        const char nc = peek(lx);
+
+        /* single-char TeX commands used for spacing: \; \, \: \! */
+        if (nc == ';' || nc == ',' || nc == ':' || nc == '!') {
+            const char *cmd_start = lx->src + lx->pos;
+            const size_t cmd_pos = lx->pos;
+            const size_t cmd_col = lx->col;
+            advance(lx); /* consume that single char */
+            lx->current = make_tok(TP_TOK_COMMAND, cmd_start, 1, cmd_pos, cmd_col);
+            return;
+        }
+
         const char *cmd_start = lx->src + lx->pos;
         const size_t cmd_pos = lx->pos;
         const size_t cmd_col = lx->col;
