@@ -42,7 +42,7 @@ $(BUILD_DIR)/%.o: src/%.c
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) -c $< -o $@
 
 $(TARGET): $(OBJS)
-	$(CC) $(OBJS) -o $@ $(LDFLAGS) $(SDL_LIBS)
+	$(CC) $(OBJS) -o $@ $(LDFLAGS) $(SDL_LIBS) -lm
 
 run: all
 	./$(TARGET)
