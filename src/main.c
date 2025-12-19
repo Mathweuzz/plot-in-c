@@ -11,13 +11,14 @@
 #include "tp_ast.h"
 
 static void update_title(SDL_Window *w, const TP_View *v, const char *expr) {
-    char buf[256];
+    char buf[300];
 
     char expr_short[80];
     if (expr) {
         size_t n = strlen(expr);
-        if (n < sizeof(expr_short)) strcpy(expr_short, expr);
-        else {
+        if (n < sizeof(expr_short)) {
+            strcpy(expr_short, expr);
+        } else {
             memcpy(expr_short, expr, sizeof(expr_short) - 4);
             expr_short[sizeof(expr_short) - 4] = '.';
             expr_short[sizeof(expr_short) - 3] = '.';
@@ -29,7 +30,7 @@ static void update_title(SDL_Window *w, const TP_View *v, const char *expr) {
     }
 
     snprintf(buf, sizeof(buf),
-             "TatuPlot | %s | x:[%.3g,%.3g] y:[%.3g,%.3g] | WASD pan  +/- zoom  R reset  ESC sair",
+             "TatuPlot | %s | x:[%.3g,%.3g] y:[%.3g,%.3g] | drag: pan | wheel: zoom | R reset | ESC sair",
              expr_short, v->xmin, v->xmax, v->ymin, v->ymax);
 
     SDL_SetWindowTitle(w, buf);
@@ -67,7 +68,6 @@ static void autofit_param_view(TP_View *view,
 
     if (!have) return;
 
-    /* padding 5% */
     double padx = (maxx - minx) * 0.05; if (padx <= 0) padx = 1.0;
     double pady = (maxy - miny) * 0.05; if (pady <= 0) pady = 1.0;
 
@@ -98,35 +98,25 @@ int main(int argc, char **argv) {
 
     const int is_tuple = (expr_ast->type == TP_NODE_TUPLE2);
 
-    /* Define ranges e viewport */
     TP_View view = args.view;
     TP_View view0 = args.view;
 
     double tmin = 0.0, tmax = 1.0;
-
     int fit_x = 0;
     int fit_y = 0;
 
     if (is_tuple) {
-        /* Se o user passou --tmin/--tmax, respeita. Senão:
-           interpreta --xmin/--xmax como range de t (compatível com teu comando). */
         if (args.has_t) {
             tmin = args.tmin;
             tmax = args.tmax;
         } else if (args.has_xrange) {
+            /* compat com teu comando: xmin/xmax viram t-range */
             tmin = args.view.xmin;
             tmax = args.view.xmax;
-
-            /* como xmin/xmax viraram t-range, precisamos auto-ajustar o viewport X do gráfico */
             fit_x = 1;
-
-            /* opcional: se y-range não foi fornecido, também auto-ajusta Y */
             fit_y = args.has_yrange ? 0 : 1;
-
-            /* deixa view.x em algo neutro antes do autofit */
             view.xmin = -10.0; view.xmax = 10.0;
         } else {
-            /* fallback: 0..2pi */
             tmin = 0.0;
             tmax = 6.283185307179586;
             fit_x = 1;
@@ -138,7 +128,7 @@ int main(int argc, char **argv) {
                            tmin, tmax,
                            fit_x, fit_y);
 
-        view0 = view; /* reset deve voltar para o fit */
+        view0 = view;
     }
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
@@ -175,6 +165,10 @@ int main(int argc, char **argv) {
 
     update_title(window, &view, args.expr);
 
+    /* Drag state */
+    int dragging = 0;
+    int last_mx = 0, last_my = 0;
+
     int running = 1;
     while (running) {
         SDL_Event e;
@@ -190,11 +184,73 @@ int main(int argc, char **argv) {
                     }
                     break;
 
+                case SDL_MOUSEBUTTONDOWN:
+                    if (e.button.button == SDL_BUTTON_LEFT) {
+                        dragging = 1;
+                        last_mx = e.button.x;
+                        last_my = e.button.y;
+                    }
+                    break;
+
+                case SDL_MOUSEBUTTONUP:
+                    if (e.button.button == SDL_BUTTON_LEFT) {
+                        dragging = 0;
+                    }
+                    break;
+
+                case SDL_MOUSEMOTION:
+                    if (dragging) {
+                        int w, h;
+                        SDL_GetWindowSize(window, &w, &h);
+                        TP_Screen screen = { .w = w, .h = h };
+
+                        /* Converte last e current para mundo e pan pelo delta (com sinal "map-drag") */
+                        double x0, y0, x1, y1;
+                        tp_screen_to_world(&view, screen, last_mx, last_my, &x0, &y0);
+                        tp_screen_to_world(&view, screen, e.motion.x, e.motion.y, &x1, &y1);
+
+                        /* arrastar -> move o mundo junto com o mouse */
+                        tp_view_pan(&view, -(x1 - x0), -(y1 - y0));
+
+                        last_mx = e.motion.x;
+                        last_my = e.motion.y;
+
+                        update_title(window, &view, args.expr);
+                    }
+                    break;
+
+                case SDL_MOUSEWHEEL: {
+                    /* Zoom com âncora no cursor */
+                    int w, h;
+                    SDL_GetWindowSize(window, &w, &h);
+                    TP_Screen screen = { .w = w, .h = h };
+
+                    int mx, my;
+                    SDL_GetMouseState(&mx, &my);
+
+                    double ax, ay;
+                    tp_screen_to_world(&view, screen, mx, my, &ax, &ay);
+
+                    /* scroll up -> zoom in | scroll down -> zoom out */
+                    double factor = 1.0;
+                    if (e.wheel.y > 0) factor = 0.85;
+                    else if (e.wheel.y < 0) factor = 1.15;
+
+                    if (factor != 1.0) {
+                        tp_view_zoom_at(&view, factor, ax, ay);
+                        update_title(window, &view, args.expr);
+                    }
+                } break;
+
                 case SDL_KEYDOWN: {
                     const SDL_Keycode key = e.key.keysym.sym;
 
-                    if (key == SDLK_ESCAPE) { running = 0; break; }
+                    if (key == SDLK_ESCAPE) {
+                        running = 0;
+                        break;
+                    }
 
+                    /* Mantém WASD e +/- também (útil no notebook) */
                     const double dx = (view.xmax - view.xmin) * 0.05;
                     const double dy = (view.ymax - view.ymin) * 0.05;
 
@@ -229,7 +285,6 @@ int main(int argc, char **argv) {
         if (!is_tuple) {
             tp_draw_function(renderer, &view, screen, expr_ast, args.fg_r, args.fg_g, args.fg_b);
         } else {
-            /* parâmetro é "x" no parser/eval, então avaliamos xexpr(t) e yexpr(t) via tp_eval(node, t) */
             tp_draw_parametric(renderer, &view, screen,
                                expr_ast->as.tuple2.a, expr_ast->as.tuple2.b,
                                tmin, tmax, 3000,

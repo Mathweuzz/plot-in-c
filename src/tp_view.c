@@ -17,3 +17,26 @@ void tp_view_zoom(TP_View *v, double factor) {
     v->ymin = cy - half_h;
     v->ymax = cy + half_h;
 }
+
+void tp_view_zoom_at(TP_View *v, double factor, double anchor_x, double anchor_y) {
+    /* Evita ranges degenerados */
+    if (factor <= 0.0) return;
+
+    const double rx = (v->xmax - v->xmin);
+    const double ry = (v->ymax - v->ymin);
+    if (rx <= 0.0 || ry <= 0.0) return;
+
+    /* Posição relativa do anchor dentro do viewport (0..1) */
+    const double ax = (anchor_x - v->xmin) / rx;
+    const double ay = (anchor_y - v->ymin) / ry;
+
+    const double new_rx = rx * factor;
+    const double new_ry = ry * factor;
+
+    /* Mantém o anchor na mesma posição relativa */
+    v->xmin = anchor_x - ax * new_rx;
+    v->xmax = v->xmin + new_rx;
+
+    v->ymin = anchor_y - ay * new_ry;
+    v->ymax = v->ymin + new_ry;
+}
