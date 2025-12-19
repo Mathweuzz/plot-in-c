@@ -45,7 +45,7 @@ $(TARGET): $(OBJS)
 	$(CC) $(OBJS) -o $@ $(LDFLAGS) $(SDL_LIBS) -lm
 
 run: all
-	./$(TARGET)
+	./$(TARGET) $(ARGS)
 
 clean:
 	@rm -rf $(BUILD_DIR) $(BIN_DIR)
