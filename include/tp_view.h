@@ -10,12 +10,9 @@ typedef struct TP_View {
     double ymin, ymax;
 } TP_View;
 
-/* Pan no espaço do "mundo" (unidades matemáticas). */
 void tp_view_pan(TP_View *v, double dx, double dy);
 
-/* Zoom em torno do centro.
-   factor < 1  => zoom in
-   factor > 1  => zoom out */
+/* factor < 1 => zoom in, factor > 1 => zoom out */
 void tp_view_zoom(TP_View *v, double factor);
 
 #ifdef __cplusplus

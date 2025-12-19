@@ -13,15 +13,12 @@ typedef struct TP_Screen {
     int h;
 } TP_Screen;
 
-/* Converte coordenada do mundo (x,y) para pixel (sx,sy). */
 void tp_world_to_screen(const TP_View *v, TP_Screen s,
                         double x, double y, int *sx, int *sy);
 
-/* Converte pixel (sx,sy) para mundo (x,y). Útil p/ mouse depois. */
 void tp_screen_to_world(const TP_View *v, TP_Screen s,
                         int sx, int sy, double *x, double *y);
 
-/* Desenha grade (grid) e eixos com "ticks" básicos. */
 void tp_draw_grid(SDL_Renderer *r, const TP_View *v, TP_Screen s);
 void tp_draw_axes(SDL_Renderer *r, const TP_View *v, TP_Screen s);
 

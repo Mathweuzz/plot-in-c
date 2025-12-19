@@ -1,8 +1,6 @@
 #ifndef TP_AST_H
 #define TP_AST_H
 
-#include <stddef.h>
-
 typedef enum TP_NodeType {
     TP_NODE_NUMBER,
     TP_NODE_VAR_X,
@@ -15,8 +13,8 @@ typedef enum TP_NodeType {
     TP_NODE_DIV,
     TP_NODE_POW,
 
-    TP_NODE_FUNC1,   /* sin, cos, tan, log, exp, sqrt */
-    TP_NODE_FRAC     /* \frac{a}{b} (equivale a div, mas mantemos distinto p/ debug) */
+    TP_NODE_FUNC1,
+    TP_NODE_FRAC
 } TP_NodeType;
 
 typedef enum TP_Func1 {
@@ -43,7 +41,6 @@ struct TP_Node {
     } as;
 };
 
-/* Alocação simples (malloc). Nesta fase, liberamos com tp_ast_free. */
 TP_Node *tp_node_number(double v);
 TP_Node *tp_node_var_x(void);
 TP_Node *tp_node_unary(TP_NodeType t, TP_Node *a);

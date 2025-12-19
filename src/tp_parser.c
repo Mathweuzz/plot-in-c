@@ -1,13 +1,6 @@
 #include "tp_parser.h"
 #include <string.h>
 
-/* Precedências:
-   - prefixo (-)
-   - potência (^) direita-associativa
-   - multiplicação/divisão
-   - soma/sub
-   - multiplicação implícita tem mesma precedência de '*' (nesta v1) */
-
 typedef enum {
     PREC_NONE = 0,
     PREC_ADD  = 10,
@@ -17,11 +10,25 @@ typedef enum {
 } Prec;
 
 static void set_err(TP_Parser *p, const char *msg) {
-    if (!p->error) p->error = msg;
+    if (!p->error) {
+        p->error = msg;
+        p->error_pos = p->lx.current.pos;
+        p->error_col = p->lx.current.col;
+    }
 }
 
 static TP_Token cur(TP_Parser *p) { return p->lx.current; }
-static void next(TP_Parser *p) { tp_lex_next(&p->lx); if (p->lx.error) set_err(p, p->lx.error); }
+
+static void next(TP_Parser *p) {
+    tp_lex_next(&p->lx);
+    if (p->lx.error) {
+        if (!p->error) {
+            p->error = p->lx.error;
+            p->error_pos = p->lx.error_pos;
+            p->error_col = p->lx.error_col;
+        }
+    }
+}
 
 static int tok_is(TP_Parser *p, TP_TokType t) { return cur(p).type == t; }
 
@@ -37,14 +44,12 @@ static Prec infix_prec(TP_Parser *p) {
     if (t == TP_TOK_STAR || t == TP_TOK_SLASH) return PREC_MUL;
     if (t == TP_TOK_CARET) return PREC_POW;
 
-    /* multiplicação implícita: se o token atual pode iniciar um "primary",
-       e o lado esquerdo já existe, tratamos como '*' */
+    /* multiplicação implícita */
     if (tp_tok_is_primary_start(t)) return PREC_MUL;
 
     return PREC_NONE;
 }
 
-/* Forward */
 static TP_Node *parse_expr_prec(TP_Parser *p, Prec prec);
 
 static int consume(TP_Parser *p, TP_TokType t, const char *msg) {
@@ -53,14 +58,6 @@ static int consume(TP_Parser *p, TP_TokType t, const char *msg) {
     return 0;
 }
 
-/* Parse de primary:
-   - number
-   - x
-   - (expr)
-   - {expr}
-   - \sin(expr) ou \sin{expr} (aceita ambos)
-   - \frac{a}{b}
-*/
 static TP_Node *parse_primary(TP_Parser *p) {
     TP_Token t = cur(p);
 
@@ -70,12 +67,21 @@ static TP_Node *parse_primary(TP_Parser *p) {
     }
 
     if (t.type == TP_TOK_IDENT) {
-        /* v1: apenas 'x' */
+        /* v1: x, pi, e */
         if (t.len == 1 && t.lexeme[0] == 'x') {
             next(p);
             return tp_node_var_x();
         }
-        set_err(p, "identificador desconhecido (v1 suporta apenas 'x')");
+        if (t.len == 2 && strncmp(t.lexeme, "pi", 2) == 0) {
+            next(p);
+            return tp_node_number(3.14159265358979323846);
+        }
+        if (t.len == 1 && t.lexeme[0] == 'e') {
+            next(p);
+            return tp_node_number(2.71828182845904523536);
+        }
+
+        set_err(p, "identificador desconhecido (v1 suporta: x, pi, e)");
         return NULL;
     }
 
@@ -96,23 +102,28 @@ static TP_Node *parse_primary(TP_Parser *p) {
     }
 
     if (t.type == TP_TOK_COMMAND) {
-        /* \frac{a}{b} */
         if (is_command(t, "frac")) {
             next(p);
+
             if (!consume(p, TP_TOK_LBRACE, "faltou '{' apos \\frac")) return NULL;
             TP_Node *num = parse_expr_prec(p, PREC_NONE);
             if (!num) return NULL;
-            if (!consume(p, TP_TOK_RBRACE, "faltou '}' no numerador de \\frac")) { tp_ast_free(num); return NULL; }
+            if (!consume(p, TP_TOK_RBRACE, "faltou '}' no numerador de \\frac")) {
+                tp_ast_free(num); return NULL;
+            }
 
-            if (!consume(p, TP_TOK_LBRACE, "faltou '{' no denominador de \\frac")) { tp_ast_free(num); return NULL; }
+            if (!consume(p, TP_TOK_LBRACE, "faltou '{' no denominador de \\frac")) {
+                tp_ast_free(num); return NULL;
+            }
             TP_Node *den = parse_expr_prec(p, PREC_NONE);
             if (!den) { tp_ast_free(num); return NULL; }
-            if (!consume(p, TP_TOK_RBRACE, "faltou '}' no denominador de \\frac")) { tp_ast_free(num); tp_ast_free(den); return NULL; }
+            if (!consume(p, TP_TOK_RBRACE, "faltou '}' no denominador de \\frac")) {
+                tp_ast_free(num); tp_ast_free(den); return NULL;
+            }
 
             return tp_node_frac(num, den);
         }
 
-        /* Funções unárias */
         TP_Func1 f;
         if      (is_command(t, "sin"))  f = TP_F_SIN;
         else if (is_command(t, "cos"))  f = TP_F_COS;
@@ -127,17 +138,10 @@ static TP_Node *parse_primary(TP_Parser *p) {
 
         next(p);
 
-        /* Aceita argumento em (...) ou {...}.
-           Também aceita \sin x (um primary) como açúcar. */
-        TP_Node *arg = NULL;
-        if (tok_is(p, TP_TOK_LPAREN) || tok_is(p, TP_TOK_LBRACE)) {
-            arg = parse_primary(p);
-        } else {
-            /* \sin x -> arg é primary */
-            arg = parse_primary(p);
-        }
-
+        /* argumento pode ser (...) ou {...} ou um primary direto */
+        TP_Node *arg = parse_primary(p);
         if (!arg) { set_err(p, "faltou argumento para funcao"); return NULL; }
+
         return tp_node_func1(f, arg);
     }
 
@@ -145,18 +149,16 @@ static TP_Node *parse_primary(TP_Parser *p) {
     return NULL;
 }
 
-/* Parse prefixo: -primary */
 static TP_Node *parse_prefix(TP_Parser *p) {
     if (tok_is(p, TP_TOK_MINUS)) {
         next(p);
-        TP_Node *rhs = parse_prefix(p); /* prefixo pode encadear: --x */
+        TP_Node *rhs = parse_prefix(p);
         if (!rhs) return NULL;
         return tp_node_unary(TP_NODE_UNARY_NEG, rhs);
     }
     return parse_primary(p);
 }
 
-/* Pratt: expr com precedência */
 static TP_Node *parse_expr_prec(TP_Parser *p, Prec prec) {
     TP_Node *left = parse_prefix(p);
     if (!left) return NULL;
@@ -167,27 +169,21 @@ static TP_Node *parse_expr_prec(TP_Parser *p, Prec prec) {
 
         TP_Token op = cur(p);
 
-        /* Potência é direita-associativa:
-           a ^ b ^ c => a ^ (b ^ c)
-           então o RHS usa (pcur - 1) */
         if (op.type == TP_TOK_CARET) {
             next(p);
-            TP_Node *rhs = parse_expr_prec(p, (Prec)(pcur - 1));
+            TP_Node *rhs = parse_expr_prec(p, (Prec)(pcur - 1)); /* direita-assoc */
             if (!rhs) { tp_ast_free(left); return NULL; }
             left = tp_node_bin(TP_NODE_POW, left, rhs);
             continue;
         }
 
-        /* Multiplicação implícita: se estamos aqui e token atual é início de primary,
-           tratamos como '*' sem consumir operador explícito. */
         if (tp_tok_is_primary_start(op.type)) {
-            TP_Node *rhs = parse_expr_prec(p, (Prec)(PREC_MUL)); /* mesma prec do '*' */
+            TP_Node *rhs = parse_expr_prec(p, PREC_MUL);
             if (!rhs) { tp_ast_free(left); return NULL; }
             left = tp_node_bin(TP_NODE_MUL, left, rhs);
             continue;
         }
 
-        /* Operadores normais */
         if (op.type == TP_TOK_PLUS || op.type == TP_TOK_MINUS ||
             op.type == TP_TOK_STAR || op.type == TP_TOK_SLASH) {
 
@@ -213,8 +209,15 @@ static TP_Node *parse_expr_prec(TP_Parser *p, Prec prec) {
 
 void tp_parse_init(TP_Parser *p, const char *src) {
     p->error = NULL;
+    p->error_pos = 0;
+    p->error_col = 1;
+
     tp_lex_init(&p->lx, src);
-    if (p->lx.error) set_err(p, p->lx.error);
+    if (p->lx.error) {
+        p->error = p->lx.error;
+        p->error_pos = p->lx.error_pos;
+        p->error_col = p->lx.error_col;
+    }
 }
 
 TP_Node *tp_parse_expr(TP_Parser *p) {

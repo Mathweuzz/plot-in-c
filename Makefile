@@ -1,16 +1,15 @@
-# Plot in C - Makefile (C99 + SDL2)
+# TatuPlot - Makefile (C99 + SDL2)
 # Uso:
-#   make        -> compila
-#   make run    -> executa
-#   make clean  -> limpa build/bin
+#   make
+#   make run ARGS='--expr "\\sin(x)"'
+#   make clean
 
 CC      := gcc
 CSTD    := -std=c99
 CFLAGS  := $(CSTD) -Wall -Wextra -pedantic -O2 -Iinclude
 LDFLAGS :=
 
-# SDL2 flags:
-# Preferimos sdl2-config; se não existir, caímos para pkg-config.
+# SDL2 flags (prefer sdl2-config; fallback pkg-config)
 SDL_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null)
 SDL_LIBS   := $(shell sdl2-config --libs 2>/dev/null)
 
@@ -19,7 +18,6 @@ SDL_CFLAGS := $(shell pkg-config --cflags sdl2 2>/dev/null)
 SDL_LIBS   := $(shell pkg-config --libs sdl2 2>/dev/null)
 endif
 
-# Se ainda estiver vazio, o build vai falhar com mensagem mais clara.
 ifeq ($(strip $(SDL_CFLAGS)),)
 $(warning Nao foi possivel obter flags do SDL2. Instale 'sdl2' e verifique sdl2-config ou pkg-config.)
 endif
