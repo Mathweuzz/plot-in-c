@@ -9,6 +9,7 @@
 #include "tp_plot.h"
 #include "tp_parser.h"
 #include "tp_ast.h"
+#include "tp_screenshot.h"
 
 static void update_title(SDL_Window *w, const TP_View *v, const char *expr) {
     char buf[300];
@@ -30,7 +31,7 @@ static void update_title(SDL_Window *w, const TP_View *v, const char *expr) {
     }
 
     snprintf(buf, sizeof(buf),
-             "TatuPlot | %s | x:[%.3g,%.3g] y:[%.3g,%.3g] | drag: pan | wheel: zoom | R reset | ESC sair",
+             "TatuPlot | %s | x:[%.3g,%.3g] y:[%.3g,%.3g] | WASD pan  +/- zoom  P screenshot  R reset  ESC sair",
              expr_short, v->xmin, v->xmax, v->ymin, v->ymax);
 
     SDL_SetWindowTitle(w, buf);
@@ -102,19 +103,21 @@ int main(int argc, char **argv) {
     TP_View view0 = args.view;
 
     double tmin = 0.0, tmax = 1.0;
-    int fit_x = 0;
-    int fit_y = 0;
+    int fit_x = 0, fit_y = 0;
 
     if (is_tuple) {
         if (args.has_t) {
             tmin = args.tmin;
             tmax = args.tmax;
         } else if (args.has_xrange) {
-            /* compat com teu comando: xmin/xmax viram t-range */
+            /* compat: xmin/xmax viram t-range quando a expr é tupla */
             tmin = args.view.xmin;
             tmax = args.view.xmax;
+
             fit_x = 1;
             fit_y = args.has_yrange ? 0 : 1;
+
+            /* antes do autofit, deixe X neutro */
             view.xmin = -10.0; view.xmax = 10.0;
         } else {
             tmin = 0.0;
@@ -165,11 +168,13 @@ int main(int argc, char **argv) {
 
     update_title(window, &view, args.expr);
 
-    /* Drag state */
-    int dragging = 0;
-    int last_mx = 0, last_my = 0;
-
     int running = 1;
+
+    /* screenshot control */
+    int screenshot_requested = 0;
+    int screenshot_and_exit = args.shot_once ? 1 : 0;
+    const char *out_path = args.out_path ? args.out_path : "tatuplot.bmp";
+
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
@@ -184,73 +189,11 @@ int main(int argc, char **argv) {
                     }
                     break;
 
-                case SDL_MOUSEBUTTONDOWN:
-                    if (e.button.button == SDL_BUTTON_LEFT) {
-                        dragging = 1;
-                        last_mx = e.button.x;
-                        last_my = e.button.y;
-                    }
-                    break;
-
-                case SDL_MOUSEBUTTONUP:
-                    if (e.button.button == SDL_BUTTON_LEFT) {
-                        dragging = 0;
-                    }
-                    break;
-
-                case SDL_MOUSEMOTION:
-                    if (dragging) {
-                        int w, h;
-                        SDL_GetWindowSize(window, &w, &h);
-                        TP_Screen screen = { .w = w, .h = h };
-
-                        /* Converte last e current para mundo e pan pelo delta (com sinal "map-drag") */
-                        double x0, y0, x1, y1;
-                        tp_screen_to_world(&view, screen, last_mx, last_my, &x0, &y0);
-                        tp_screen_to_world(&view, screen, e.motion.x, e.motion.y, &x1, &y1);
-
-                        /* arrastar -> move o mundo junto com o mouse */
-                        tp_view_pan(&view, -(x1 - x0), -(y1 - y0));
-
-                        last_mx = e.motion.x;
-                        last_my = e.motion.y;
-
-                        update_title(window, &view, args.expr);
-                    }
-                    break;
-
-                case SDL_MOUSEWHEEL: {
-                    /* Zoom com âncora no cursor */
-                    int w, h;
-                    SDL_GetWindowSize(window, &w, &h);
-                    TP_Screen screen = { .w = w, .h = h };
-
-                    int mx, my;
-                    SDL_GetMouseState(&mx, &my);
-
-                    double ax, ay;
-                    tp_screen_to_world(&view, screen, mx, my, &ax, &ay);
-
-                    /* scroll up -> zoom in | scroll down -> zoom out */
-                    double factor = 1.0;
-                    if (e.wheel.y > 0) factor = 0.85;
-                    else if (e.wheel.y < 0) factor = 1.15;
-
-                    if (factor != 1.0) {
-                        tp_view_zoom_at(&view, factor, ax, ay);
-                        update_title(window, &view, args.expr);
-                    }
-                } break;
-
                 case SDL_KEYDOWN: {
                     const SDL_Keycode key = e.key.keysym.sym;
 
-                    if (key == SDLK_ESCAPE) {
-                        running = 0;
-                        break;
-                    }
+                    if (key == SDLK_ESCAPE) { running = 0; break; }
 
-                    /* Mantém WASD e +/- também (útil no notebook) */
                     const double dx = (view.xmax - view.xmin) * 0.05;
                     const double dy = (view.ymax - view.ymin) * 0.05;
 
@@ -263,6 +206,10 @@ int main(int argc, char **argv) {
                     if (key == SDLK_MINUS  || key == SDLK_KP_MINUS) tp_view_zoom(&view, 1.15);
 
                     if (key == SDLK_r) view = view0;
+
+                    if (key == SDLK_p) {
+                        screenshot_requested = 1;
+                    }
 
                     update_title(window, &view, args.expr);
                 } break;
@@ -289,6 +236,26 @@ int main(int argc, char **argv) {
                                expr_ast->as.tuple2.a, expr_ast->as.tuple2.b,
                                tmin, tmax, 3000,
                                args.fg_r, args.fg_g, args.fg_b);
+        }
+
+        /* auto-shot: dispara assim que tiver um frame desenhado */
+        if (screenshot_and_exit) screenshot_requested = 1;
+
+        if (screenshot_requested) {
+            char sbuf[256];
+            int s_rc = tp_screenshot_save_bmp(renderer, w, h, out_path, sbuf, (int)sizeof(sbuf));
+            if (s_rc == 0) {
+                fprintf(stdout, "Screenshot salvo: %s\n", out_path);
+                fflush(stdout);
+            } else {
+                fprintf(stderr, "Falha ao salvar screenshot (%s): %s\n", out_path, sbuf[0] ? sbuf : "erro desconhecido");
+            }
+
+            screenshot_requested = 0;
+
+            if (screenshot_and_exit) {
+                running = 0;
+            }
         }
 
         SDL_RenderPresent(renderer);

@@ -46,13 +46,19 @@ void tp_args_print_help(const char *prog) {
     printf("  --width W --height H   tamanho da janela (default 900x600)\n");
     printf("  --bg R,G,B             cor do fundo (default 0,0,0)\n");
     printf("  --fg R,G,B             cor do grafico (default 0,220,0)\n");
+    printf("  --out caminho.bmp      caminho do screenshot (default tatuplot.bmp)\n");
+    printf("  --shot                 tira screenshot na primeira render e sai\n");
     printf("  -h, --help             mostra ajuda\n\n");
+
+    printf("Atalhos:\n");
+    printf("  P   salva screenshot (usa --out se passado)\n");
+    printf("  WASD pan | +/- zoom | R reset | ESC sair\n\n");
 
     printf("Exemplos:\n");
     printf("  %s --expr \"\\\\sin(x)\"\n", prog);
     printf("  %s --expr \"\\\\frac{\\\\sin(x)}{x}\" --xmin -20 --xmax 20 --ymin -2 --ymax 2\n", prog);
     printf("  %s --expr \"\\\\left(16\\\\sin^{3}(x),\\;13\\\\cos(x)-5\\\\cos(2x)-2\\\\cos(3x)-\\\\cos(4x)\\\\right)\" \\\n", prog);
-    printf("     --tmin 0 --tmax 6.283185307179586 --xmin -18 --xmax 18 --ymin -18 --ymax 14\n");
+    printf("     --xmin 0 --xmax 6.283185307179586 --ymin -18 --ymax 14 --out heart.bmp --shot\n");
 }
 
 int tp_args_parse(int argc, char **argv, TP_Args *out,
@@ -76,6 +82,9 @@ int tp_args_parse(int argc, char **argv, TP_Args *out,
     out->has_t = 0;
     out->tmin = 0.0;
     out->tmax = 1.0;
+
+    out->out_path = NULL;
+    out->shot_once = 0;
 
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -148,6 +157,17 @@ int tp_args_parse(int argc, char **argv, TP_Args *out,
                 return 1;
             }
             i++; continue;
+        }
+
+        if (streq(a, "--out")) {
+            if (i + 1 >= argc) { snprintf(errbuf, errbuf_sz, "faltou valor para --out"); return 1; }
+            out->out_path = argv[++i];
+            continue;
+        }
+
+        if (streq(a, "--shot")) {
+            out->shot_once = 1;
+            continue;
         }
 
         snprintf(errbuf, errbuf_sz, "argumento desconhecido: %s", a);

@@ -21,6 +21,10 @@ typedef struct TP_Args {
 
     /* parametric range */
     double tmin, tmax;
+
+    /* screenshot */
+    const char *out_path; /* default "tatuplot.bmp" se NULL */
+    int shot_once;        /* se 1: salva e sai */
 } TP_Args;
 
 /* retorna:
