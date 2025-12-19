@@ -1,124 +1,37 @@
-#include <SDL2/SDL.h>
 #include <stdio.h>
+#include <math.h>
 
-#include "tp_view.h"
-#include "tp_render.h"
+#include "tp_parser.h"
+#include "tp_ast.h"
 
-static void update_window_title(SDL_Window *w, const TP_View *v) {
-    char buf[256];
-    /* Sem depender de locale/text rendering: só título */
-    snprintf(buf, sizeof(buf),
-             "TatuPlot | x:[%.3g, %.3g] y:[%.3g, %.3g] | (WASD pan, +/- zoom, ESC sair)",
-             v->xmin, v->xmax, v->ymin, v->ymax);
-    SDL_SetWindowTitle(w, buf);
+static void sample(const char *expr) {
+    TP_Parser p;
+    tp_parse_init(&p, expr);
+
+    TP_Node *root = tp_parse_expr(&p);
+    if (!root) {
+        fprintf(stderr, "ERRO parse: %s\n", p.error ? p.error : "desconhecido");
+        fprintf(stderr, "Expr: %s\n", expr);
+        return;
+    }
+
+    printf("Expr OK: %s\n", expr);
+    for (int i = -5; i <= 5; i++) {
+        double x = (double)i;
+        double y = tp_eval(root, x);
+        printf("  x=% .2f -> y=% .6f\n", x, y);
+    }
+
+    tp_ast_free(root);
 }
 
-int main(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
+int main(void) {
+    /* Testes que cobrem boa parte do v1 */
+    sample("\\sin(x)");
+    sample("x^2 + 3x + 2");
+    sample("\\frac{\\sin(x)}{x}");
+    sample("\\sqrt{x^2 + 1}");
+    sample("\\exp(-\\frac{x^2}{2})");
 
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
-        fprintf(stderr, "SDL_Init falhou: %s\n", SDL_GetError());
-        return 1;
-    }
-
-    SDL_Window *window = SDL_CreateWindow(
-        "TatuPlot",
-        SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED,
-        900, 600,
-        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
-    );
-    if (!window) {
-        fprintf(stderr, "SDL_CreateWindow falhou: %s\n", SDL_GetError());
-        SDL_Quit();
-        return 1;
-    }
-
-    SDL_Renderer *renderer = SDL_CreateRenderer(
-        window, -1,
-        SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC
-    );
-    if (!renderer) {
-        fprintf(stderr, "SDL_CreateRenderer falhou: %s\n", SDL_GetError());
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 1;
-    }
-
-    /* Viewport inicial (mundo matemático) */
-    TP_View view = {
-        .xmin = -10.0, .xmax = 10.0,
-        .ymin = -10.0, .ymax = 10.0
-    };
-
-    update_window_title(window, &view);
-
-    int running = 1;
-    while (running) {
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
-            switch (e.type) {
-            case SDL_QUIT:
-                running = 0;
-                break;
-
-            case SDL_WINDOWEVENT:
-                if (e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
-                    update_window_title(window, &view);
-                }
-                break;
-
-            case SDL_KEYDOWN: {
-                const SDL_Keycode key = e.key.keysym.sym;
-
-                if (key == SDLK_ESCAPE) {
-                    running = 0;
-                    break;
-                }
-
-                /* Pan: desloca 5% do tamanho atual do viewport */
-                const double dx = (view.xmax - view.xmin) * 0.05;
-                const double dy = (view.ymax - view.ymin) * 0.05;
-
-                if (key == SDLK_a) tp_view_pan(&view, -dx, 0.0);
-                if (key == SDLK_d) tp_view_pan(&view, +dx, 0.0);
-                if (key == SDLK_w) tp_view_pan(&view, 0.0, +dy);
-                if (key == SDLK_s) tp_view_pan(&view, 0.0, -dy);
-
-                /* Zoom: + / - (também aceita keypad) */
-                if (key == SDLK_EQUALS || key == SDLK_KP_PLUS) {
-                    tp_view_zoom(&view, 0.85); /* zoom in */
-                }
-                if (key == SDLK_MINUS || key == SDLK_KP_MINUS) {
-                    tp_view_zoom(&view, 1.15); /* zoom out */
-                }
-
-                update_window_title(window, &view);
-            } break;
-
-            default:
-                break;
-            }
-        }
-
-        int w, h;
-        SDL_GetWindowSize(window, &w, &h);
-        TP_Screen screen = { .w = w, .h = h };
-
-        /* Fundo */
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-        SDL_RenderClear(renderer);
-
-        /* Grid e eixos */
-        tp_draw_grid(renderer, &view, screen);
-        tp_draw_axes(renderer, &view, screen);
-
-        SDL_RenderPresent(renderer);
-    }
-
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
     return 0;
 }
